@@ -108,31 +108,89 @@ export class ConversationController {
     }
   }
 
-  // @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Get all conversations' })
+  /**
+   * Get all conversations for the authenticated user
+   * Returns only conversations where the user is creator or participant
+   * @param req - The request object containing the authenticated user
+   * @returns List of conversations for the user
+   */
+  @ApiOperation({
+    summary: 'Get all conversations for authenticated user',
+    description:
+      'Returns all conversations where the authenticated user is creator or participant. Users can only see their own conversations.',
+  })
   @Get()
-  async findAll() {
+  async findAll(@Request() req: any) {
     try {
-      const conversations = await this.conversationService.findAll();
+      // Extract user ID from JWT token
+      const userId = req.user?.userId;
+
+      // Validate user is authenticated
+      if (!userId) {
+        throw new HttpException(
+          'User not authenticated',
+          HttpStatus.UNAUTHORIZED,
+        );
+      }
+
+      // Get all conversations for this user
+      const conversations = await this.conversationService.findAll(userId);
+
       return conversations;
     } catch (error) {
+      // Handle known errors
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle other errors
       return {
         success: false,
-        message: error.message,
+        message: error.message || 'Failed to fetch conversations',
       };
     }
   }
 
-  @ApiOperation({ summary: 'Get a conversation by id' })
+  /**
+   * Get a conversation by ID
+   * Returns conversation only if the authenticated user is creator or participant
+   * @param id - The ID of the conversation
+   * @param req - The request object containing the authenticated user
+   * @returns The conversation
+   */
+  @ApiOperation({
+    summary: 'Get a conversation by ID',
+    description:
+      'Returns a conversation by ID. Users can only access conversations where they are creator or participant. Returns 403 if user is not authorized.',
+  })
   @Get(':id')
-  async findOne(@Param('id') id: string) {
+  async findOne(@Param('id') id: string, @Request() req: any) {
     try {
-      const conversation = await this.conversationService.findOne(id);
+      // Extract user ID from JWT token
+      const userId = req.user?.userId;
+
+      // Validate user is authenticated
+      if (!userId) {
+        throw new HttpException(
+          'User not authenticated',
+          HttpStatus.UNAUTHORIZED,
+        );
+      }
+
+      // Get conversation (service handles authorization check)
+      const conversation = await this.conversationService.findOne(id, userId);
+
       return conversation;
     } catch (error) {
+      // Handle known errors
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle other errors
       return {
         success: false,
-        message: error.message,
+        message: error.message || 'Failed to fetch conversation',
       };
     }
   }

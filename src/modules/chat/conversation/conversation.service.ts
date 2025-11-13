@@ -359,18 +359,29 @@ export class ConversationService {
   }
 
   /**
-   * Find all conversations
-   * Returns all conversations with broadcast information if applicable
-   * @returns List of all conversations
+   * Find all conversations for a user
+   * Returns all conversations where the user is creator or participant
+   * @param userId - The ID of the authenticated user
+   * @returns List of conversations for the user
    */
-  async findAll() {
+  async findAll(userId: string) {
     try {
+      // Validate user ID is provided
+      if (!userId) {
+        throw new HttpException('User ID is required', HttpStatus.BAD_REQUEST);
+      }
+
+      // Fetch conversations where user is creator OR participant
       const conversations = await this.prisma.conversation.findMany({
         where: {
           deleted_at: null, // Only non-deleted conversations
+          OR: [
+            { creator_id: userId }, // User is creator
+            { participant_id: userId }, // User is participant
+          ],
         },
         orderBy: {
-          updated_at: 'desc',
+          updated_at: 'desc', // Most recently updated first
         },
         select: {
           id: true,
@@ -400,17 +411,18 @@ export class ConversationService {
             orderBy: {
               created_at: 'desc',
             },
-            take: 1,
+            take: 1, // Get last message for preview
             select: {
               id: true,
               message: true,
+              message_type: true,
               created_at: true,
             },
           },
         },
       });
 
-      // Add image URLs
+      // Add avatar URLs
       for (const conversation of conversations) {
         if (conversation.creator?.avatar) {
           conversation.creator['avatar_url'] = SojebStorage.url(
@@ -427,8 +439,15 @@ export class ConversationService {
       return {
         success: true,
         data: conversations,
+        count: conversations.length,
       };
     } catch (error) {
+      // Handle known errors
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle other errors
       throw new HttpException(
         error.message || 'Failed to fetch conversations',
         HttpStatus.INTERNAL_SERVER_ERROR,
@@ -439,11 +458,19 @@ export class ConversationService {
   /**
    * Find a single conversation by ID
    * Returns conversation with broadcast information if applicable
+   * Verifies that the user is authorized to access this conversation
    * @param id - The ID of the conversation
+   * @param userId - The ID of the authenticated user
    * @returns The conversation
    */
-  async findOne(id: string) {
+  async findOne(id: string, userId: string) {
     try {
+      // Validate user ID is provided
+      if (!userId) {
+        throw new HttpException('User ID is required', HttpStatus.BAD_REQUEST);
+      }
+
+      // Fetch conversation by ID
       const conversation = await this.prisma.conversation.findUnique({
         where: { id },
         select: {
@@ -456,6 +483,7 @@ export class ConversationService {
           assisted_by: true,
           created_at: true,
           updated_at: true,
+          deleted_at: true,
           creator: {
             select: {
               id: true,
@@ -485,11 +513,29 @@ export class ConversationService {
         },
       });
 
+      // Check if conversation exists
       if (!conversation) {
         throw new HttpException('Conversation not found', HttpStatus.NOT_FOUND);
       }
 
-      // Add image URLs
+      // Check if conversation is deleted
+      if (conversation.deleted_at) {
+        throw new HttpException('Conversation not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Verify user is authorized to access this conversation
+      // User must be either creator or participant
+      if (
+        conversation.creator_id !== userId &&
+        conversation.participant_id !== userId
+      ) {
+        throw new HttpException(
+          'You are not authorized to access this conversation',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      // Add avatar URLs
       if (conversation.creator?.avatar) {
         conversation.creator['avatar_url'] = SojebStorage.url(
           appConfig().storageUrl.avatar + conversation.creator.avatar,
@@ -501,14 +547,22 @@ export class ConversationService {
         );
       }
 
+      // Remove deleted_at from response (not needed in response)
+      const { deleted_at, ...conversationData } = conversation;
+
       return {
         success: true,
-        data: conversation,
+        data: conversationData,
       };
     } catch (error) {
       // Handle known errors
       if (error instanceof HttpException) {
         throw error;
+      }
+
+      // Handle database errors
+      if (error.code === 'P2025') {
+        throw new HttpException('Conversation not found', HttpStatus.NOT_FOUND);
       }
 
       // Handle other errors
@@ -558,8 +612,10 @@ export class ConversationService {
       // Check if broadcast already has a conversation
       if (broadcast.conversation_id) {
         // Return the existing conversation
+        // Pass doctorId for authorization check (doctor should be participant)
         const existingConversation = await this.findOne(
           broadcast.conversation_id,
+          doctorId,
         );
         return {
           success: false,
