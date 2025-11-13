@@ -1,4 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import {
+  Injectable,
+  HttpException,
+  HttpStatus,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -7,14 +13,31 @@ import appConfig from '../../../config/app.config';
 import { SojebStorage } from '../../../common/lib/Disk/SojebStorage';
 import { DateHelper } from '../../../common/helper/date.helper';
 import { MessageGateway } from '../message/message.gateway';
+import { BroadcastService } from '../broadcast/broadcast.service';
 
+/**
+ * Conversation Service
+ * Handles all business logic related to conversations
+ * - Creates conversations between users
+ * - Integrates with broadcasts (when a doctor responds to a patient's broadcast)
+ * - Ensures only one doctor can respond to a broadcast
+ */
 @Injectable()
 export class ConversationService {
   constructor(
     private prisma: PrismaService,
     private readonly messageGateway: MessageGateway,
+    @Inject(forwardRef(() => BroadcastService))
+    private readonly broadcastService: BroadcastService,
   ) {}
 
+  /**
+   * Create a new conversation
+   * If broadcast_id is provided, this creates a conversation from a broadcast
+   * Ensures only one doctor can respond to a broadcast
+   * @param createConversationDto - The conversation data
+   * @returns Created conversation
+   */
   async create(createConversationDto: CreateConversationDto) {
     try {
       const data: any = {};
@@ -26,59 +49,202 @@ export class ConversationService {
         data.participant_id = createConversationDto.participant_id;
       }
 
-      // check if conversation exists
-      let conversation = await this.prisma.conversation.findFirst({
-        select: {
-          id: true,
-          creator_id: true,
-          participant_id: true,
-          created_at: true,
-          updated_at: true,
-          creator: {
-            select: {
-              id: true,
-              name: true,
-              avatar: true,
-            },
+      // Handle broadcast integration
+      if (createConversationDto.broadcast_id) {
+        // Validate broadcast exists and is open
+        const broadcast = await this.prisma.broadcast.findUnique({
+          where: { id: createConversationDto.broadcast_id },
+          select: {
+            id: true,
+            status: true,
+            patient_id: true,
+            assisted_by: true,
+            conversation_id: true,
           },
-          participant: {
-            select: {
-              id: true,
-              name: true,
-              avatar: true,
-            },
-          },
-          messages: {
-            orderBy: {
-              created_at: 'desc',
-            },
-            take: 1,
-            select: {
-              id: true,
-              message: true,
-              created_at: true,
-            },
-          },
-        },
-        where: {
-          creator_id: data.creator_id,
-          participant_id: data.participant_id,
-        },
-      });
+        });
 
-      if (conversation) {
-        return {
-          success: false,
-          message: 'Conversation already exists',
-          data: conversation,
-        };
+        if (!broadcast) {
+          throw new HttpException('Broadcast not found', HttpStatus.NOT_FOUND);
+        }
+
+        // Check if broadcast is already assisted
+        if (broadcast.status !== 'open') {
+          throw new HttpException(
+            'This broadcast has already been assisted by another doctor',
+            HttpStatus.CONFLICT,
+          );
+        }
+
+        // Check if broadcast already has a conversation
+        if (broadcast.conversation_id) {
+          // Return the existing conversation
+          const existingConversation =
+            await this.prisma.conversation.findUnique({
+              where: { id: broadcast.conversation_id },
+              select: {
+                id: true,
+                creator_id: true,
+                participant_id: true,
+                created_at: true,
+                updated_at: true,
+                broadcast_id: true,
+                type: true,
+                status: true,
+                creator: {
+                  select: {
+                    id: true,
+                    name: true,
+                    avatar: true,
+                  },
+                },
+                participant: {
+                  select: {
+                    id: true,
+                    name: true,
+                    avatar: true,
+                  },
+                },
+                messages: {
+                  orderBy: {
+                    created_at: 'desc',
+                  },
+                  take: 1,
+                  select: {
+                    id: true,
+                    message: true,
+                    created_at: true,
+                  },
+                },
+              },
+            });
+
+          if (existingConversation) {
+            // Add avatar URLs
+            if (existingConversation.creator?.avatar) {
+              existingConversation.creator['avatar_url'] = SojebStorage.url(
+                appConfig().storageUrl.avatar +
+                  existingConversation.creator.avatar,
+              );
+            }
+            if (existingConversation.participant?.avatar) {
+              existingConversation.participant['avatar_url'] = SojebStorage.url(
+                appConfig().storageUrl.avatar +
+                  existingConversation.participant.avatar,
+              );
+            }
+
+            return {
+              success: false,
+              message: 'Conversation already exists for this broadcast',
+              data: existingConversation,
+            };
+          }
+        }
+
+        // Validate that participant (doctor) is responding to patient's broadcast
+        if (
+          broadcast.patient_id !== data.creator_id &&
+          broadcast.patient_id !== data.participant_id
+        ) {
+          throw new HttpException(
+            'The broadcast patient must be one of the conversation participants',
+            HttpStatus.BAD_REQUEST,
+          );
+        }
+
+        // Set conversation type and broadcast link
+        data.broadcast_id = createConversationDto.broadcast_id;
+        data.type = createConversationDto.type || 'patient_doctor';
+        data.status = 'open';
+
+        // Set assisted_by to the doctor who is responding
+        // The doctor is the one who is NOT the patient
+        if (broadcast.patient_id === data.creator_id) {
+          data.assisted_by = data.participant_id; // Doctor is participant
+        } else {
+          data.assisted_by = data.creator_id; // Doctor is creator
+        }
+      } else {
+        // Regular conversation (not from broadcast)
+        data.type = createConversationDto.type || 'patient_doctor';
+        data.status = 'open';
       }
 
-      conversation = await this.prisma.conversation.create({
+      // Check if conversation already exists (without broadcast)
+      if (!createConversationDto.broadcast_id) {
+        const existingConversation = await this.prisma.conversation.findFirst({
+          select: {
+            id: true,
+            creator_id: true,
+            participant_id: true,
+            created_at: true,
+            updated_at: true,
+            creator: {
+              select: {
+                id: true,
+                name: true,
+                avatar: true,
+              },
+            },
+            participant: {
+              select: {
+                id: true,
+                name: true,
+                avatar: true,
+              },
+            },
+            messages: {
+              orderBy: {
+                created_at: 'desc',
+              },
+              take: 1,
+              select: {
+                id: true,
+                message: true,
+                created_at: true,
+              },
+            },
+          },
+          where: {
+            creator_id: data.creator_id,
+            participant_id: data.participant_id,
+            broadcast_id: null, // Only check non-broadcast conversations
+          },
+        });
+
+        if (existingConversation) {
+          // Add avatar URLs
+          if (existingConversation.creator?.avatar) {
+            existingConversation.creator['avatar_url'] = SojebStorage.url(
+              appConfig().storageUrl.avatar +
+                existingConversation.creator.avatar,
+            );
+          }
+          if (existingConversation.participant?.avatar) {
+            existingConversation.participant['avatar_url'] = SojebStorage.url(
+              appConfig().storageUrl.avatar +
+                existingConversation.participant.avatar,
+            );
+          }
+
+          return {
+            success: false,
+            message: 'Conversation already exists',
+            data: existingConversation,
+          };
+        }
+      }
+
+      // Create the conversation
+      const conversation = await this.prisma.conversation.create({
         select: {
           id: true,
           creator_id: true,
           participant_id: true,
+          broadcast_id: true,
+          type: true,
+          status: true,
+          assisted_by: true,
           created_at: true,
           updated_at: true,
           creator: {
@@ -112,27 +278,58 @@ export class ConversationService {
         },
       });
 
-      // add image url
-      if (conversation.creator.avatar) {
+      // Update broadcast status to "assisted" and link conversation
+      if (createConversationDto.broadcast_id) {
+        try {
+          await this.broadcastService.update(
+            createConversationDto.broadcast_id,
+            {
+              status: 'assisted',
+              assisted_by: data.assisted_by,
+              conversation_id: conversation.id,
+            },
+          );
+        } catch (broadcastError) {
+          // Log error but don't fail the conversation creation
+          console.error('Failed to update broadcast:', broadcastError);
+        }
+      }
+
+      // Add image URLs
+      if (conversation.creator?.avatar) {
         conversation.creator['avatar_url'] = SojebStorage.url(
           appConfig().storageUrl.avatar + conversation.creator.avatar,
         );
       }
-      if (conversation.participant.avatar) {
+      if (conversation.participant?.avatar) {
         conversation.participant['avatar_url'] = SojebStorage.url(
           appConfig().storageUrl.avatar + conversation.participant.avatar,
         );
       }
 
-      // trigger socket event
-      this.messageGateway.server.to(data.creator_id).emit('conversation', {
-        from: data.creator_id,
-        data: conversation,
-      });
-      this.messageGateway.server.to(data.participant_id).emit('conversation', {
-        from: data.participant_id,
-        data: conversation,
-      });
+      // Trigger socket event
+      if (data.creator_id) {
+        this.messageGateway.server.to(data.creator_id).emit('conversation', {
+          from: data.creator_id,
+          data: conversation,
+        });
+      }
+      if (data.participant_id) {
+        this.messageGateway.server
+          .to(data.participant_id)
+          .emit('conversation', {
+            from: data.participant_id,
+            data: conversation,
+          });
+      }
+
+      // Notify all doctors about the broadcast update
+      if (createConversationDto.broadcast_id) {
+        this.messageGateway.server.emit('broadcast_assisted', {
+          broadcast_id: createConversationDto.broadcast_id,
+          conversation: conversation,
+        });
+      }
 
       return {
         success: true,
@@ -140,16 +337,38 @@ export class ConversationService {
         data: conversation,
       };
     } catch (error) {
-      return {
-        success: false,
-        message: error.message,
-      };
+      // Handle known errors
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle database errors
+      if (error.code === 'P2002') {
+        throw new HttpException(
+          'A conversation with this information already exists',
+          HttpStatus.CONFLICT,
+        );
+      }
+
+      // Handle other errors
+      throw new HttpException(
+        error.message || 'Failed to create conversation',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 
+  /**
+   * Find all conversations
+   * Returns all conversations with broadcast information if applicable
+   * @returns List of all conversations
+   */
   async findAll() {
     try {
       const conversations = await this.prisma.conversation.findMany({
+        where: {
+          deleted_at: null, // Only non-deleted conversations
+        },
         orderBy: {
           updated_at: 'desc',
         },
@@ -157,6 +376,10 @@ export class ConversationService {
           id: true,
           creator_id: true,
           participant_id: true,
+          broadcast_id: true,
+          type: true,
+          status: true,
+          assisted_by: true,
           created_at: true,
           updated_at: true,
           creator: {
@@ -187,14 +410,14 @@ export class ConversationService {
         },
       });
 
-      // add image url
+      // Add image URLs
       for (const conversation of conversations) {
-        if (conversation.creator.avatar) {
+        if (conversation.creator?.avatar) {
           conversation.creator['avatar_url'] = SojebStorage.url(
             appConfig().storageUrl.avatar + conversation.creator.avatar,
           );
         }
-        if (conversation.participant.avatar) {
+        if (conversation.participant?.avatar) {
           conversation.participant['avatar_url'] = SojebStorage.url(
             appConfig().storageUrl.avatar + conversation.participant.avatar,
           );
@@ -206,13 +429,19 @@ export class ConversationService {
         data: conversations,
       };
     } catch (error) {
-      return {
-        success: false,
-        message: error.message,
-      };
+      throw new HttpException(
+        error.message || 'Failed to fetch conversations',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 
+  /**
+   * Find a single conversation by ID
+   * Returns conversation with broadcast information if applicable
+   * @param id - The ID of the conversation
+   * @returns The conversation
+   */
   async findOne(id: string) {
     try {
       const conversation = await this.prisma.conversation.findUnique({
@@ -221,6 +450,10 @@ export class ConversationService {
           id: true,
           creator_id: true,
           participant_id: true,
+          broadcast_id: true,
+          type: true,
+          status: true,
+          assisted_by: true,
           created_at: true,
           updated_at: true,
           creator: {
@@ -237,13 +470,34 @@ export class ConversationService {
               avatar: true,
             },
           },
+          messages: {
+            orderBy: {
+              created_at: 'desc',
+            },
+            take: 10,
+            select: {
+              id: true,
+              message: true,
+              message_type: true,
+              created_at: true,
+            },
+          },
         },
       });
 
-      // add image url
-      if (conversation.creator.avatar) {
+      if (!conversation) {
+        throw new HttpException('Conversation not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Add image URLs
+      if (conversation.creator?.avatar) {
         conversation.creator['avatar_url'] = SojebStorage.url(
           appConfig().storageUrl.avatar + conversation.creator.avatar,
+        );
+      }
+      if (conversation.participant?.avatar) {
+        conversation.participant['avatar_url'] = SojebStorage.url(
+          appConfig().storageUrl.avatar + conversation.participant.avatar,
         );
       }
 
@@ -252,10 +506,130 @@ export class ConversationService {
         data: conversation,
       };
     } catch (error) {
-      return {
-        success: false,
-        message: error.message,
+      // Handle known errors
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle other errors
+      throw new HttpException(
+        error.message || 'Failed to fetch conversation',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Create a conversation from a broadcast (Doctor responding to patient)
+   * This method ensures only one doctor can respond to a broadcast
+   * @param broadcastId - The ID of the broadcast
+   * @param doctorId - The ID of the doctor responding
+   * @returns Created conversation
+   */
+  async createFromBroadcast(
+    broadcastId: string,
+    doctorId: string,
+  ): Promise<any> {
+    try {
+      // Validate broadcast exists and is open
+      const broadcast = await this.prisma.broadcast.findUnique({
+        where: { id: broadcastId },
+        select: {
+          id: true,
+          status: true,
+          patient_id: true,
+          assisted_by: true,
+          conversation_id: true,
+        },
+      });
+
+      if (!broadcast) {
+        throw new HttpException('Broadcast not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Check if broadcast is already assisted
+      if (broadcast.status !== 'open') {
+        throw new HttpException(
+          'This broadcast has already been assisted by another doctor',
+          HttpStatus.CONFLICT,
+        );
+      }
+
+      // Check if broadcast already has a conversation
+      if (broadcast.conversation_id) {
+        // Return the existing conversation
+        const existingConversation = await this.findOne(
+          broadcast.conversation_id,
+        );
+        return {
+          success: false,
+          message: 'Conversation already exists for this broadcast',
+          data: existingConversation.data,
+        };
+      }
+
+      // Validate that the user is a doctor
+      const doctor = await this.prisma.user.findUnique({
+        where: { id: doctorId },
+        select: {
+          id: true,
+          type: true,
+          approved_at: true,
+        },
+      });
+
+      if (!doctor) {
+        throw new HttpException('Doctor not found', HttpStatus.NOT_FOUND);
+      }
+
+      if (doctor.type !== 'doctor') {
+        throw new HttpException(
+          'Only doctors can respond to broadcasts',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      if (!doctor.approved_at) {
+        throw new HttpException(
+          'Doctor account is not verified. Please wait for admin approval.',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      // Validate that the patient exists
+      const patient = await this.prisma.user.findUnique({
+        where: { id: broadcast.patient_id },
+        select: {
+          id: true,
+          type: true,
+        },
+      });
+
+      if (!patient) {
+        throw new HttpException('Patient not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Create conversation from broadcast
+      // Patient is creator, Doctor is participant
+      const createConversationDto: CreateConversationDto = {
+        creator_id: broadcast.patient_id,
+        participant_id: doctorId,
+        broadcast_id: broadcastId,
+        type: 'patient_doctor',
       };
+
+      return await this.create(createConversationDto);
+    } catch (error) {
+      // Handle known errors
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle other errors
+      throw new HttpException(
+        error.message || 'Failed to create conversation from broadcast',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 

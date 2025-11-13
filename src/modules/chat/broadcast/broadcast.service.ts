@@ -350,10 +350,29 @@ export class BroadcastService {
       // Check if broadcast exists
       const existingBroadcast = await this.prisma.broadcast.findUnique({
         where: { id },
+        select: {
+          id: true,
+          status: true,
+          assisted_by: true,
+          conversation_id: true,
+        },
       });
 
       if (!existingBroadcast) {
         throw new HttpException('Broadcast not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Prevent updating if broadcast is already assisted (race condition protection)
+      // This is a safety check in case two doctors try to respond simultaneously
+      if (
+        updateBroadcastDto.status === 'assisted' &&
+        existingBroadcast.status === 'assisted' &&
+        existingBroadcast.assisted_by !== updateBroadcastDto.assisted_by
+      ) {
+        throw new HttpException(
+          'This broadcast has already been assisted by another doctor',
+          HttpStatus.CONFLICT,
+        );
       }
 
       // Prepare update data
