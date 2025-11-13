@@ -82,6 +82,7 @@ model User {
   roles                Role[]
   role_users           RoleUser[]
   payment_transactions PaymentTransaction[]
+  broadcasts           Broadcast[]          @relation("patient_broadcasts")
 
   @@map("users")
 }
@@ -250,6 +251,33 @@ model PaymentTransaction {
   @@map("payment_transactions")
 }
 
+// ---------Start Broadcast schema---------
+
+// this table stores patient broadcast messages
+model Broadcast {
+  id         String    @id @default(cuid())
+  created_at DateTime  @default(now())
+  updated_at DateTime  @default(now())
+  deleted_at DateTime?
+
+  patient_id String
+  patient    User   @relation("patient_broadcasts", fields: [patient_id], references: [id], onDelete: Cascade)
+
+  message String?
+
+  status          String? @default("open") // "open", "assisted", "closed"
+  assisted_by     String? // doctor_id who responded first
+  conversation_id String? // Links to conversation once doctor responds
+
+  @@index([status])
+  @@index([patient_id])
+  @@index([created_at])
+  @@index([assisted_by])
+  @@map("broadcasts")
+}
+
+// ---------End Broadcast schema---------
+
 // ---------Start Chat schema---------
 
 enum MessageStatus {
@@ -280,8 +308,13 @@ model Message {
   attachment_id String?
   attachment    Attachment? @relation(fields: [attachment_id], references: [id])
 
-  message String?
+  message          String? // Message text content
+  message_type     String? @default("text") // "text", "prescription"
+  medicine_details String? // Prescription data (JSON or text)
+  patient_name     String? // For prescription messages
 
+  @@index([message_type])
+  @@index([conversation_id])
   @@map("messages")
 }
 
@@ -316,8 +349,17 @@ model Conversation {
   participant_id String?
   participant    User?   @relation("participant", fields: [participant_id], references: [id])
 
+  status       String? @default("open") // "open", "closed", "assisted"
+  type         String? @default("patient_doctor") // "patient_doctor", "doctor_shop_owner"
+  broadcast_id String? // Link to broadcast (if created from broadcast)
+  assisted_by  String? // doctor_id who responded first (for broadcasts)
+
   messages Message[]
 
+  @@index([status])
+  @@index([type])
+  @@index([broadcast_id])
+  @@index([assisted_by])
   @@map("conversations")
 }
 

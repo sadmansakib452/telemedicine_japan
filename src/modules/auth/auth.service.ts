@@ -25,6 +25,29 @@ export class AuthService {
     @InjectRedis() private readonly redis: Redis,
   ) {}
 
+  /**
+   * Validate user type for registration
+   * Rejects admin type registration
+   * Only allows: patient, doctor, shop_owner
+   * @param type - User type to validate
+   * @returns boolean - true if valid, false if invalid
+   */
+  private validateType(type?: string): boolean {
+    // If type is not provided, default to 'patient'
+    if (!type) {
+      return true;
+    }
+
+    // Admin registration is not allowed
+    if (type === 'admin') {
+      return false;
+    }
+
+    // Only allow: patient, doctor, shop_owner
+    const allowedTypes = ['patient', 'doctor', 'shop_owner'];
+    return allowedTypes.includes(type);
+  }
+
   async me(userId: string) {
     try {
       const user = await this.prisma.user.findFirst({
@@ -325,6 +348,18 @@ export class AuthService {
     }
   }
 
+  /**
+   * Register a new user
+   * Validates user type and rejects admin registration
+   * Defaults to 'patient' if type is not provided
+   * @param name - User full name
+   * @param first_name - User first name
+   * @param last_name - User last name
+   * @param email - User email address
+   * @param password - User password
+   * @param type - User type (patient, doctor, shop_owner)
+   * @returns Success response with verification message
+   */
   async register({
     name,
     first_name,
@@ -341,6 +376,19 @@ export class AuthService {
     type?: string;
   }) {
     try {
+      // Validate user type
+      // Default to 'patient' if type is not provided
+      const userType = type || 'patient';
+
+      // Validate that type is allowed (reject admin)
+      if (!this.validateType(userType)) {
+        return {
+          success: false,
+          message:
+            'Invalid user type. Only patient, doctor, and shop_owner can be registered. Admin registration is not allowed.',
+        };
+      }
+
       // Check if email already exist
       const userEmailExist = await UserRepository.exist({
         field: 'email',
@@ -349,18 +397,20 @@ export class AuthService {
 
       if (userEmailExist) {
         return {
+          success: false,
           statusCode: 401,
           message: 'Email already exist',
         };
       }
 
+      // Create user with validated type
       const user = await UserRepository.createUser({
         name: name,
         first_name: first_name,
         last_name: last_name,
         email: email,
         password: password,
-        type: type,
+        type: userType,
       });
 
       if (user == null && user.success == false) {
@@ -389,44 +439,44 @@ export class AuthService {
       }
 
       // ----------------------------------------------------
-      // // create otp code
-      // const token = await UcodeRepository.createToken({
-      //   userId: user.data.id,
-      //   isOtp: true,
-      // });
-
-      // // send otp code to email
-      // await this.mailService.sendOtpCodeToEmail({
-      //   email: email,
-      //   name: name,
-      //   otp: token,
-      // });
-
-      // return {
-      //   success: true,
-      //   message: 'We have sent an OTP code to your email',
-      // };
-
-      // ----------------------------------------------------
-
-      // Generate verification token
-      const token = await UcodeRepository.createVerificationToken({
+      // create otp code
+      const token = await UcodeRepository.createToken({
         userId: user.data.id,
-        email: email,
+        isOtp: true,
       });
 
-      // Send verification email with token
-      await this.mailService.sendVerificationLink({
-        email,
-        name: email,
-        token: token.token,
-        type: type,
+      // send otp code to email
+      await this.mailService.sendOtpCodeToEmail({
+        email: email,
+        name: name,
+        otp: token,
       });
 
       return {
         success: true,
-        message: 'We have sent a verification link to your email',
+        message: 'We have sent an OTP code to your email',
       };
+
+      // ----------------------------------------------------
+
+      // Generate verification token
+      // const token = await UcodeRepository.createVerificationToken({
+      //   userId: user.data.id,
+      //   email: email,
+      // });
+
+      // // Send verification email with token
+      // await this.mailService.sendVerificationLink({
+      //   email,
+      //   name: email,
+      //   token: token.token,
+      //   type: userType,
+      // });
+
+      // return {
+      //   success: true,
+      //   message: 'We have sent a verification link to your email',
+      // };
     } catch (error) {
       return {
         success: false,
