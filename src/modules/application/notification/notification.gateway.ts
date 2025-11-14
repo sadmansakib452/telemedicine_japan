@@ -18,6 +18,7 @@ import appConfig from '../../../config/app.config';
 @WebSocketGateway({
   cors: {
     origin: '*',
+    namespace: 'notification',
   },
 })
 export class NotificationGateway

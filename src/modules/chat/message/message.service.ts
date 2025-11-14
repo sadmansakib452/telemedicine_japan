@@ -186,6 +186,7 @@ export class MessageService {
               id: true,
               name: true,
               avatar: true,
+              type: true,
             },
           },
           receiver: {
@@ -193,6 +194,7 @@ export class MessageService {
               id: true,
               name: true,
               avatar: true,
+              type: true,
             },
           },
         },
@@ -352,6 +354,7 @@ export class MessageService {
               id: true,
               name: true,
               avatar: true,
+              type: true,
             },
           },
           receiver: {
@@ -359,6 +362,7 @@ export class MessageService {
               id: true,
               name: true,
               avatar: true,
+              type: true,
             },
           },
           attachment: {
@@ -405,6 +409,164 @@ export class MessageService {
         success: false,
         message: error.message,
       };
+    }
+  }
+
+  /**
+   * Find a single message by ID
+   * Returns message with prescription data if applicable
+   * Verifies that the user is authorized to access this message
+   * @param messageId - The ID of the message
+   * @param userId - The ID of the authenticated user
+   * @returns The message
+   */
+  async findOne(messageId: string, userId: string) {
+    try {
+      // Validate user ID is provided
+      if (!userId) {
+        throw new HttpException('User ID is required', HttpStatus.BAD_REQUEST);
+      }
+
+      // Validate message ID is provided
+      if (!messageId) {
+        throw new HttpException(
+          'Message ID is required',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      // Get user details for admin check
+      const userDetails = await UserRepository.getUserDetails(userId);
+
+      // Find message by ID
+      const message = await this.prisma.message.findFirst({
+        where: {
+          id: messageId,
+          deleted_at: null, // Only non-deleted messages
+        },
+        select: {
+          id: true,
+          message: true,
+          message_type: true,
+          medicine_details: true,
+          patient_name: true,
+          sender_id: true,
+          receiver_id: true,
+          conversation_id: true,
+          status: true,
+          created_at: true,
+          updated_at: true,
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              avatar: true,
+              type: true,
+            },
+          },
+          receiver: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              avatar: true,
+              type: true,
+            },
+          },
+          conversation: {
+            select: {
+              id: true,
+              type: true,
+              status: true,
+              creator_id: true,
+              participant_id: true,
+            },
+          },
+          attachment: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+              size: true,
+              file: true,
+            },
+          },
+        },
+      });
+
+      // Check if message exists
+      if (!message) {
+        throw new HttpException('Message not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Check authorization
+      // Admin can access any message
+      if (userDetails.type === Role.ADMIN) {
+        // Authorized - continue
+      } else {
+        // User must be sender, receiver, or conversation participant
+        const isSender = message.sender_id === userId;
+        const isReceiver = message.receiver_id === userId;
+        const isConversationCreator =
+          message.conversation?.creator_id === userId;
+        const isConversationParticipant =
+          message.conversation?.participant_id === userId;
+
+        if (
+          !isSender &&
+          !isReceiver &&
+          !isConversationCreator &&
+          !isConversationParticipant
+        ) {
+          throw new HttpException(
+            'You are not authorized to access this message',
+            HttpStatus.FORBIDDEN,
+          );
+        }
+      }
+
+      // Add avatar URLs
+      if (message.sender?.avatar) {
+        message.sender['avatar_url'] = SojebStorage.url(
+          appConfig().storageUrl.avatar + message.sender.avatar,
+        );
+      }
+      if (message.receiver?.avatar) {
+        message.receiver['avatar_url'] = SojebStorage.url(
+          appConfig().storageUrl.avatar + message.receiver.avatar,
+        );
+      }
+
+      // Add attachment URL if exists
+      if (message.attachment?.file) {
+        message.attachment['file_url'] = SojebStorage.url(
+          appConfig().storageUrl.attachment + message.attachment.file,
+        );
+      }
+
+      // Remove conversation creator/participant IDs from response (not needed in response)
+      if (message.conversation) {
+        const { creator_id, participant_id, ...conversationData } =
+          message.conversation;
+        message.conversation = conversationData as any;
+      }
+
+      return {
+        success: true,
+        data: message,
+      };
+    } catch (error) {
+      // Handle known errors
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle other errors
+      throw new HttpException(
+        error.message || 'Failed to fetch message',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 

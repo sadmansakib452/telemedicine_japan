@@ -228,6 +228,17 @@ export class AuthService {
             // };
           }
         }
+
+        // Check if doctor or shop_owner is approved before allowing login
+        if (
+          (user.type === 'doctor' || user.type === 'shop_owner') &&
+          !user.approved_at
+        ) {
+          throw new UnauthorizedException(
+            'Your account is pending admin approval. Please wait for approval before logging in.',
+          );
+        }
+
         return result;
       } else {
         throw new UnauthorizedException('Password not matched');
@@ -247,12 +258,24 @@ export class AuthService {
 
   async login({ email, userId }) {
     try {
+      const user = await UserRepository.getUserDetails(userId);
+
+      // Check if doctor or shop_owner is approved before allowing login
+      if (
+        (user.type === 'doctor' || user.type === 'shop_owner') &&
+        !user.approved_at
+      ) {
+        return {
+          success: false,
+          message:
+            'Your account is pending admin approval. Please wait for approval before logging in.',
+        };
+      }
+
       const payload = { email: email, sub: userId };
 
       const accessToken = this.jwtService.sign(payload, { expiresIn: '1h' });
       const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
-
-      const user = await UserRepository.getUserDetails(userId);
 
       // store refreshToken
       await this.redis.set(
@@ -303,6 +326,18 @@ export class AuthService {
         return {
           success: false,
           message: 'User not found',
+        };
+      }
+
+      // Check if doctor or shop_owner is approved before allowing token refresh
+      if (
+        (userDetails.type === 'doctor' || userDetails.type === 'shop_owner') &&
+        !userDetails.approved_at
+      ) {
+        return {
+          success: false,
+          message:
+            'Your account is pending admin approval. Please wait for approval before accessing the system.',
         };
       }
 
@@ -585,25 +620,44 @@ export class AuthService {
         });
 
         if (existToken) {
+          // Only approve patients automatically when they verify email
+          // Doctors and shop_owners need admin approval
+          const updateData: any = {
+            email_verified_at: new Date(Date.now()),
+          };
+
+          // Only set approved_at for patients
+          // Doctors and shop_owners must be approved by admin
+          if (user.type === 'patient') {
+            updateData.approved_at = new Date(Date.now());
+          }
+
           await this.prisma.user.update({
             where: {
               id: user.id,
             },
-            data: {
-              email_verified_at: new Date(Date.now()),
-            },
+            data: updateData,
           });
 
           // delete otp code
-          // await UcodeRepository.deleteToken({
-          //   email: email,
-          //   token: token,
-          // });
+          await UcodeRepository.deleteToken({
+            email: email,
+            token: token,
+          });
 
-          return {
-            success: true,
-            message: 'Email verified successfully',
-          };
+          // Return appropriate message based on user type
+          if (user.type === 'patient') {
+            return {
+              success: true,
+              message: 'Email verified successfully',
+            };
+          } else {
+            return {
+              success: true,
+              message:
+                'Email verified successfully. Your account is pending admin approval. You will be able to log in once approved.',
+            };
+          }
         } else {
           return {
             success: false,

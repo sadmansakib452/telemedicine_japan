@@ -85,6 +85,7 @@ export class ShopOwnerService {
               name: true,
               email: true,
               avatar: true,
+              type: true,
             },
           },
           receiver: {
@@ -92,6 +93,7 @@ export class ShopOwnerService {
               id: true,
               name: true,
               avatar: true,
+              type: true,
             },
           },
           conversation: {
@@ -192,6 +194,7 @@ export class ShopOwnerService {
               name: true,
               email: true,
               avatar: true,
+              type: true,
             },
           },
           participant: {
@@ -200,6 +203,7 @@ export class ShopOwnerService {
               name: true,
               email: true,
               avatar: true,
+              type: true,
             },
           },
           messages: {
@@ -308,6 +312,7 @@ export class ShopOwnerService {
               name: true,
               email: true,
               avatar: true,
+              type: true,
             },
           },
           receiver: {
@@ -315,6 +320,7 @@ export class ShopOwnerService {
               id: true,
               name: true,
               avatar: true,
+              type: true,
             },
           },
           conversation: {

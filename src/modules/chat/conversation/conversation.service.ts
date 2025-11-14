@@ -95,6 +95,7 @@ export class ConversationService {
                     id: true,
                     name: true,
                     avatar: true,
+                    type: true,
                   },
                 },
                 participant: {
@@ -102,6 +103,7 @@ export class ConversationService {
                     id: true,
                     name: true,
                     avatar: true,
+                    type: true,
                   },
                 },
                 messages: {
@@ -184,6 +186,7 @@ export class ConversationService {
                 id: true,
                 name: true,
                 avatar: true,
+                type: true,
               },
             },
             participant: {
@@ -191,6 +194,7 @@ export class ConversationService {
                 id: true,
                 name: true,
                 avatar: true,
+                type: true,
               },
             },
             messages: {
@@ -252,6 +256,7 @@ export class ConversationService {
               id: true,
               name: true,
               avatar: true,
+              type: true,
             },
           },
           participant: {
@@ -259,6 +264,7 @@ export class ConversationService {
               id: true,
               name: true,
               avatar: true,
+              type: true,
             },
           },
           messages: {
@@ -398,6 +404,7 @@ export class ConversationService {
               id: true,
               name: true,
               avatar: true,
+              type: true,
             },
           },
           participant: {
@@ -405,6 +412,7 @@ export class ConversationService {
               id: true,
               name: true,
               avatar: true,
+              type: true,
             },
           },
           messages: {
@@ -489,6 +497,7 @@ export class ConversationService {
               id: true,
               name: true,
               avatar: true,
+              type: true,
             },
           },
           participant: {
@@ -496,6 +505,7 @@ export class ConversationService {
               id: true,
               name: true,
               avatar: true,
+              type: true,
             },
           },
           messages: {

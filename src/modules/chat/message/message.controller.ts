@@ -6,7 +6,9 @@ import {
   UseGuards,
   Get,
   Query,
+  Param,
   HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { MessageService } from './message.service';
 import { CreateMessageDto } from './dto/create-message.dto';
@@ -92,10 +94,7 @@ export class MessageController {
       const cursor = query.cursor as string;
 
       if (!conversation_id) {
-        throw new HttpException(
-          'Conversation ID is required',
-          400,
-        );
+        throw new HttpException('Conversation ID is required', 400);
       }
 
       const messages = await this.messageService.findAll({
@@ -116,6 +115,48 @@ export class MessageController {
       return {
         success: false,
         message: error.message || 'Failed to fetch messages',
+      };
+    }
+  }
+
+  /**
+   * Get a single message by ID
+   * Returns message with prescription data if applicable
+   * Verifies that the user is authorized to access this message
+   * @param id - The ID of the message
+   * @param req - The request object containing the authenticated user
+   * @returns The message
+   */
+  @ApiOperation({
+    summary: 'Get a single message by ID',
+    description:
+      'Get a single message by its ID. Returns message with prescription data if applicable. User must be sender, receiver, or conversation participant.',
+  })
+  @Get(':id')
+  async findOne(@Param('id') id: string, @Req() req: Request) {
+    try {
+      const user_id = req.user.userId;
+
+      if (!user_id) {
+        throw new HttpException(
+          'User not authenticated',
+          HttpStatus.UNAUTHORIZED,
+        );
+      }
+
+      const result = await this.messageService.findOne(id, user_id);
+
+      return result;
+    } catch (error) {
+      // Handle known errors
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle other errors
+      return {
+        success: false,
+        message: error.message || 'Failed to fetch message',
       };
     }
   }
