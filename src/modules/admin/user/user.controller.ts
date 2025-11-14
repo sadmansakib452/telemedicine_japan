@@ -165,61 +165,6 @@ export class UserController {
   }
 
   /**
-   * Get a single user by ID
-   * Admins can view any user's details
-   * @param id - The ID of the user
-   * @returns User details
-   */
-  @ApiOperation({
-    summary: 'Get a user by ID (Admin only)',
-    description: "View a single user's details by their ID.",
-  })
-  @Get(':id')
-  async findOne(@Param('id') id: string) {
-    try {
-      const result = await this.userService.findOne(id);
-      return result;
-    } catch (error) {
-      // Handle known errors
-      if (error instanceof HttpException) {
-        throw error;
-      }
-
-      // Handle other errors
-      return {
-        success: false,
-        message: error.message || 'Failed to fetch user',
-      };
-    }
-  }
-
-  @Patch(':id')
-  async update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    try {
-      const user = await this.userService.update(id, updateUserDto);
-      return user;
-    } catch (error) {
-      return {
-        success: false,
-        message: error.message,
-      };
-    }
-  }
-
-  @Delete(':id')
-  async remove(@Param('id') id: string) {
-    try {
-      const user = await this.userService.remove(id);
-      return user;
-    } catch (error) {
-      return {
-        success: false,
-        message: error.message,
-      };
-    }
-  }
-
-  /**
    * Get all conversations (Admin view-only)
    * Returns all conversations in the system
    * @param query - Query parameters (limit, cursor)
@@ -347,6 +292,61 @@ export class UserController {
       return {
         success: false,
         message: error.message || 'Failed to fetch system statistics',
+      };
+    }
+  }
+
+  /**
+   * Get a single user by ID
+   * Admins can view any user's details
+   * @param id - The ID of the user
+   * @returns User details
+   */
+  @ApiOperation({
+    summary: 'Get a user by ID (Admin only)',
+    description: "View a single user's details by their ID.",
+  })
+  @Get(':id')
+  async findOne(@Param('id') id: string) {
+    try {
+      const result = await this.userService.findOne(id);
+      return result;
+    } catch (error) {
+      // Handle known errors
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle other errors
+      return {
+        success: false,
+        message: error.message || 'Failed to fetch user',
+      };
+    }
+  }
+
+  @Patch(':id')
+  async update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
+    try {
+      const user = await this.userService.update(id, updateUserDto);
+      return user;
+    } catch (error) {
+      return {
+        success: false,
+        message: error.message,
+      };
+    }
+  }
+
+  @Delete(':id')
+  async remove(@Param('id') id: string) {
+    try {
+      const user = await this.userService.remove(id);
+      return user;
+    } catch (error) {
+      return {
+        success: false,
+        message: error.message,
       };
     }
   }

@@ -88,7 +88,9 @@ export class UserRepository {
           username: username,
           email: email,
           password: password,
-          type: 'su_admin',
+          type: 'admin',
+          email_verified_at: new Date(),
+          approved_at: new Date(),
         },
       });
       return user;
