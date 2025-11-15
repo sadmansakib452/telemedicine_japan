@@ -6,6 +6,9 @@ import {
   UseGuards,
   Get,
   Query,
+  Param,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { MessageService } from './message.service';
 import { CreateMessageDto } from './dto/create-message.dto';
@@ -24,66 +27,136 @@ export class MessageController {
     private readonly messageGateway: MessageGateway,
   ) {}
 
-  @ApiOperation({ summary: 'Send message' })
+  /**
+   * Send a message
+   * Supports both text messages and prescription messages
+   * Only doctors can create prescription messages
+   * @param req - The request object containing the authenticated user
+   * @param createMessageDto - The message data
+   * @returns Created message
+   */
+  @ApiOperation({
+    summary: 'Send message',
+    description:
+      'Send a text message or prescription message. Only doctors can create prescription messages.',
+  })
   @Post()
   async create(
     @Req() req: Request,
     @Body() createMessageDto: CreateMessageDto,
   ) {
-    const user_id = req.user.userId;
-    const message = await this.messageService.create(user_id, createMessageDto);
-    if (message.success) {
-      const messageData = {
-        message: {
-          id: message.data.id,
-          message_id: message.data.id,
-          body_text: message.data.message,
-          from: message.data.sender_id,
-          conversation_id: message.data.conversation_id,
-          created_at: message.data.created_at,
-        },
-      };
-      this.messageGateway.server
-        .to(message.data.conversation_id)
-        .emit('message', {
-          from: message.data.sender_id,
-          data: messageData,
-        });
+    try {
+      const user_id = req.user.userId;
+      const result = await this.messageService.create(
+        user_id,
+        createMessageDto,
+      );
+
+      // WebSocket events are handled in the service
+      // Return the result
+      return result;
+    } catch (error) {
+      // Handle known errors
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle other errors
       return {
-        success: message.success,
-        message: message.message,
-      };
-    } else {
-      return {
-        success: message.success,
-        message: message.message,
+        success: false,
+        message: error.message || 'Failed to send message',
       };
     }
   }
 
-  @ApiOperation({ summary: 'Get all messages' })
+  /**
+   * Get all messages in a conversation
+   * Returns messages with prescription data if applicable
+   * @param req - The request object containing the authenticated user
+   * @param query - Query parameters (conversation_id, limit, cursor)
+   * @returns List of messages
+   */
+  @ApiOperation({
+    summary: 'Get all messages',
+    description:
+      'Get all messages in a conversation. Returns messages with prescription data if applicable.',
+  })
   @Get()
   async findAll(
     @Req() req: Request,
     @Query()
     query: { conversation_id: string; limit?: number; cursor?: string },
   ) {
-    const user_id = req.user.userId;
-    const conversation_id = query.conversation_id as string;
-    const limit = Number(query.limit);
-    const cursor = query.cursor as string;
     try {
+      const user_id = req.user.userId;
+      const conversation_id = query.conversation_id as string;
+      const limit = Number(query.limit) || 20;
+      const cursor = query.cursor as string;
+
+      if (!conversation_id) {
+        throw new HttpException('Conversation ID is required', 400);
+      }
+
       const messages = await this.messageService.findAll({
         user_id,
         conversation_id,
         limit,
         cursor,
       });
+
       return messages;
     } catch (error) {
+      // Handle known errors
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle other errors
       return {
         success: false,
-        message: error.message,
+        message: error.message || 'Failed to fetch messages',
+      };
+    }
+  }
+
+  /**
+   * Get a single message by ID
+   * Returns message with prescription data if applicable
+   * Verifies that the user is authorized to access this message
+   * @param id - The ID of the message
+   * @param req - The request object containing the authenticated user
+   * @returns The message
+   */
+  @ApiOperation({
+    summary: 'Get a single message by ID',
+    description:
+      'Get a single message by its ID. Returns message with prescription data if applicable. User must be sender, receiver, or conversation participant.',
+  })
+  @Get(':id')
+  async findOne(@Param('id') id: string, @Req() req: Request) {
+    try {
+      const user_id = req.user.userId;
+
+      if (!user_id) {
+        throw new HttpException(
+          'User not authenticated',
+          HttpStatus.UNAUTHORIZED,
+        );
+      }
+
+      const result = await this.messageService.findOne(id, user_id);
+
+      return result;
+    } catch (error) {
+      // Handle known errors
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle other errors
+      return {
+        success: false,
+        message: error.message || 'Failed to fetch message',
       };
     }
   }

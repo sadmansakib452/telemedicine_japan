@@ -88,7 +88,9 @@ export class UserRepository {
           username: username,
           email: email,
           password: password,
-          type: 'su_admin',
+          type: 'admin',
+          email_verified_at: new Date(),
+          approved_at: new Date(),
         },
       });
       return user;
@@ -245,12 +247,24 @@ export class UserRepository {
         );
       }
 
-      if (type && ArrayHelper.inArray(type, Object.values(Role))) {
-        data['type'] = type;
+      // Validate and set user type
+      // Default to 'patient' if type is not provided
+      const userType = type || 'patient';
 
-        // if (type == Role.VENDOR) {
-        //   data['approved_at'] = DateHelper.now();
-        // }
+      // Validate user type against allowed roles
+      // Only allow: patient, doctor, shop_owner, admin (admin is validated in service layer)
+      const allowedTypes = ['patient', 'doctor', 'shop_owner', 'admin', 'user'];
+      if (ArrayHelper.inArray(userType, allowedTypes)) {
+        data['type'] = userType;
+
+        // Doctor and shop_owner require admin approval (approved_at = null initially)
+        // Patient can be active immediately (no approval needed)
+        // Admin approval is handled in admin module
+        // Note: approved_at is set to null by default for doctor/shop_owner
+        // Admin will approve them later
+      } else {
+        // If type is invalid, default to 'patient'
+        data['type'] = 'patient';
       }
 
       const user = await prisma.user.create({
@@ -335,14 +349,19 @@ export class UserRepository {
         );
       }
 
-      if (ArrayHelper.inArray(type, Object.values(Role))) {
+      // Validate user type against allowed roles
+      // Only allow: patient, doctor, shop_owner, admin, user
+      const allowedTypes = ['patient', 'doctor', 'shop_owner', 'admin', 'user'];
+      if (type && ArrayHelper.inArray(type, allowedTypes)) {
         data['type'] = type;
-      } else {
+      } else if (type) {
+        // If type is provided but invalid, return error
         return {
           success: false,
-          message: 'Invalid user type',
+          message: `Invalid user type. Allowed types: ${allowedTypes.join(', ')}`,
         };
       }
+      // If type is not provided, don't update it
 
       const existUser = await prisma.user.findFirst({
         where: {

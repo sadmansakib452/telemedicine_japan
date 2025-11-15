@@ -49,6 +49,12 @@ export class AuthController {
     }
   }
 
+  /**
+   * Register a new user
+   * Validates user type and rejects admin registration
+   * Only allows: patient, doctor, shop_owner
+   * Defaults to 'patient' if type is not provided
+   */
   @ApiOperation({ summary: 'Register a user' })
   @Post('register')
   async create(@Body() data: CreateUserDto) {
@@ -58,8 +64,9 @@ export class AuthController {
       const last_name = data.last_name;
       const email = data.email;
       const password = data.password;
-      const type = data.type;
+      const type = data.type || 'patient'; // Default to 'patient' if not provided
 
+      // Validate required fields
       if (!name) {
         throw new HttpException('Name not provided', HttpStatus.UNAUTHORIZED);
       }
@@ -85,6 +92,16 @@ export class AuthController {
         );
       }
 
+      // Validate user type (reject admin)
+      // This is handled by DTO validation, but we can also check here for additional security
+      if (type === 'admin') {
+        throw new HttpException(
+          'Admin registration is not allowed through this endpoint',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      // Register user
       const response = await this.authService.register({
         name: name,
         first_name: first_name,
